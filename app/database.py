@@ -10,6 +10,12 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     status TEXT NOT NULL,
     criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS fila (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mensagem TEXT NOT NULL,
+    processada INTEGER NOT NULL DEFAULT 0
+);
 """
 
 

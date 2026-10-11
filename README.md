@@ -5,14 +5,14 @@ API de pagamentos em Python, construída em etapas para estudar sistemas de back
 Este projeto está em desenvolvimento. Etapas concluídas:
 
 1. API de registro e consulta de pagamentos.
-2. Fila com RabbitMQ e worker que processa os pagamentos pendentes.
+2. Fila e worker que processam os pagamentos pendentes.
 
 ## Tecnologias
 
 - Python 3.14
 - FastAPI e Pydantic para a API e validação dos dados
 - SQLite (biblioteca padrão) para armazenamento
-- RabbitMQ (fila) com a biblioteca pika
+- Fila guardada no próprio SQLite (sem broker externo)
 - pytest e httpx para testes
 
 ## Como rodar
@@ -28,20 +28,20 @@ A documentação interativa fica em http://127.0.0.1:8000/docs.
 
 ## Processando pagamentos
 
-A API publica uma mensagem na fila `pagamentos.pendentes` a cada pagamento criado. O worker consome essas mensagens e decide o status:
+A API grava uma mensagem na tabela `fila` a cada pagamento criado. O worker consulta essa tabela a cada 2 segundos, processa as mensagens pendentes e decide o status:
 
 - valor até R$ 1.000,00: `aprovado`
 - valor acima de R$ 1.000,00: `recusado`
 
-O worker ignora pagamentos que já não estão `pendente`, então a mesma mensagem processada duas vezes não muda o resultado.
+O worker ignora pagamentos que já não estão `pendente`, então processar a mesma mensagem duas vezes não muda o resultado.
 
-Para rodar, primeiro suba um RabbitMQ local, depois em outro terminal:
+Para rodar, deixe a API no ar e, em outro terminal, o worker:
 
 ```bash
 python -m app.worker
 ```
 
-A conexão padrão é `amqp://guest:guest@localhost:5672/`. Para usar outra, defina a variável `RABBITMQ_URL`. O arquivo do banco é definido por `DATABASE_PATH` (padrão `pagamentos.db`).
+O arquivo do banco é definido por `DATABASE_PATH` (padrão `pagamentos.db`). Use o mesmo valor na API e no worker.
 
 ## Testes
 
@@ -76,6 +76,8 @@ app/
   main.py        rotas e criação da aplicação
   schemas.py     modelos de entrada e saída (Pydantic)
   database.py    acesso ao SQLite
+  fila.py        fila guardada numa tabela do SQLite
+  worker.py      processa os pagamentos pendentes
 tests/
   test_pagamentos.py
 ```
@@ -83,5 +85,5 @@ tests/
 ## Próximas etapas
 
 1. Idempotência: o mesmo pedido enviado duas vezes não gera dois pagamentos.
-2. Tratar falhas: retentativas e fila de mensagens com erro (dead-letter).
-3. Banco PostgreSQL e Docker Compose para subir tudo com um comando.
+2. Tratar falhas: tentativas repetidas quando o processamento dá erro.
+3. Trocar a fila de SQLite por um broker de mensagens (RabbitMQ) e usar PostgreSQL com Docker Compose.

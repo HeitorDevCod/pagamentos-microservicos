@@ -2,9 +2,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import database
-from app.fila import FilaMemoria
+from app.fila import FilaBanco
 from app.main import criar_app
-from app.worker import processar_pagamento
+from app.worker import processar_pagamento, processar_pendentes
 
 
 @pytest.fixture
@@ -13,13 +13,8 @@ def caminho_banco(tmp_path):
 
 
 @pytest.fixture
-def fila():
-    return FilaMemoria()
-
-
-@pytest.fixture
-def client(caminho_banco, fila):
-    return TestClient(criar_app(caminho_banco, fila=fila))
+def client(caminho_banco):
+    return TestClient(criar_app(caminho_banco))
 
 
 def novo_pagamento(**campos):
@@ -39,10 +34,10 @@ def test_criar_pagamento_comeca_pendente(client):
     assert corpo["metodo"] == "pix"
 
 
-def test_criar_pagamento_publica_mensagem_na_fila(client, fila):
+def test_criar_pagamento_publica_mensagem_na_fila(client, caminho_banco):
     client.post("/pagamentos", json=novo_pagamento())
 
-    assert fila.mensagens == [{"pagamento_id": 1}]
+    assert FilaBanco(caminho_banco).pendentes() == [(1, {"pagamento_id": 1})]
 
 
 def test_valor_zero_ou_negativo_e_recusado(client):
@@ -106,3 +101,19 @@ def test_worker_ignora_pagamento_inexistente(caminho_banco):
     database.criar_tabelas(caminho_banco)
 
     assert processar_pagamento(caminho_banco, 999) is None
+
+
+def test_processar_pendentes_consome_a_fila_e_atualiza_pagamentos(client, caminho_banco):
+    client.post("/pagamentos", json=novo_pagamento(valor="10.00"))
+    client.post("/pagamentos", json=novo_pagamento(valor="2000.00"))
+
+    assert processar_pendentes(caminho_banco) == 2
+    assert client.get("/pagamentos/1").json()["status"] == "aprovado"
+    assert client.get("/pagamentos/2").json()["status"] == "recusado"
+    assert FilaBanco(caminho_banco).pendentes() == []
+
+
+def test_processar_pendentes_sem_mensagens_nao_faz_nada(caminho_banco):
+    database.criar_tabelas(caminho_banco)
+
+    assert processar_pendentes(caminho_banco) == 0

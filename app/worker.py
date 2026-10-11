@@ -1,5 +1,8 @@
+import os
+import time
+
 from app import database
-from app.fila import FilaRabbitMQ
+from app.fila import FilaBanco
 
 LIMITE_CENTAVOS = 100_000  # R$ 1.000,00, limite simulado por transação
 
@@ -19,16 +22,22 @@ def processar_pagamento(caminho_banco, pagamento_id):
     return novo_status
 
 
-def executar(caminho_banco, fila=None):
-    fila = fila or FilaRabbitMQ()
-
-    def ao_receber(mensagem):
+def processar_pendentes(caminho_banco):
+    """Processa todas as mensagens pendentes da fila. Devolve quantas foram lidas."""
+    fila = FilaBanco(caminho_banco)
+    mensagens = fila.pendentes()
+    for mensagem_id, mensagem in mensagens:
         processar_pagamento(caminho_banco, mensagem["pagamento_id"])
+        fila.marcar_processada(mensagem_id)
+    return len(mensagens)
 
-    fila.consumir(ao_receber)
+
+def executar(caminho_banco, intervalo=2.0):
+    print(f"Worker iniciado. Verificando a fila a cada {intervalo} segundos.")
+    while True:
+        processar_pendentes(caminho_banco)
+        time.sleep(intervalo)
 
 
 if __name__ == "__main__":
-    import os
-
     executar(os.getenv("DATABASE_PATH", "pagamentos.db"))
