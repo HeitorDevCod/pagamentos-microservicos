@@ -156,3 +156,48 @@ def test_sem_chave_cada_requisicao_cria_um_pagamento(client):
     client.post("/pagamentos", json=novo_pagamento())
 
     assert len(client.get("/pagamentos").json()) == 2
+
+
+def test_falha_temporaria_e_tentada_de_novo_e_depois_processada(client, caminho_banco, monkeypatch):
+    import app.worker as worker
+
+    client.post("/pagamentos", json=novo_pagamento(valor="10.00"))
+    chamadas = {"n": 0}
+    processar_original = worker.processar_pagamento
+
+    def falha_uma_vez(caminho, pagamento_id):
+        chamadas["n"] += 1
+        if chamadas["n"] == 1:
+            raise RuntimeError("banco ocupado")
+        return processar_original(caminho, pagamento_id)
+
+    monkeypatch.setattr(worker, "processar_pagamento", falha_uma_vez)
+
+    processar_pendentes(caminho_banco)
+    assert client.get("/pagamentos/1").json()["status"] == "pendente"
+    assert FilaBanco(caminho_banco).pendentes() == [(1, {"pagamento_id": 1})]
+
+    processar_pendentes(caminho_banco)
+    assert client.get("/pagamentos/1").json()["status"] == "aprovado"
+    assert FilaBanco(caminho_banco).pendentes() == []
+
+
+def test_falha_permanente_vai_para_fila_de_falhas_e_marca_pagamento_com_erro(client, caminho_banco, monkeypatch):
+    import app.worker as worker
+
+    client.post("/pagamentos", json=novo_pagamento(valor="10.00"))
+
+    def sempre_falha(caminho, pagamento_id):
+        raise RuntimeError("serviço indisponível")
+
+    monkeypatch.setattr(worker, "processar_pagamento", sempre_falha)
+
+    for _ in range(3):
+        processar_pendentes(caminho_banco)
+
+    falhas = FilaBanco(caminho_banco).falhas()
+    assert len(falhas) == 1
+    assert falhas[0]["tentativas"] == 3
+    assert falhas[0]["ultimo_erro"] == "serviço indisponível"
+    assert FilaBanco(caminho_banco).pendentes() == []
+    assert client.get("/pagamentos/1").json()["status"] == "erro"

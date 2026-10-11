@@ -5,6 +5,7 @@ from app import database
 from app.fila import FilaBanco
 
 LIMITE_CENTAVOS = 100_000  # R$ 1.000,00, limite simulado por transação
+MAX_TENTATIVAS = 3
 
 
 def decidir_status(valor_centavos):
@@ -23,11 +24,18 @@ def processar_pagamento(caminho_banco, pagamento_id):
 
 
 def processar_pendentes(caminho_banco):
-    """Processa todas as mensagens pendentes da fila. Devolve quantas foram lidas."""
+    """Processa as mensagens pendentes da fila. Devolve quantas foram lidas."""
     fila = FilaBanco(caminho_banco)
     mensagens = fila.pendentes()
     for mensagem_id, mensagem in mensagens:
-        processar_pagamento(caminho_banco, mensagem["pagamento_id"])
+        pagamento_id = mensagem["pagamento_id"]
+        try:
+            processar_pagamento(caminho_banco, pagamento_id)
+        except Exception as erro:
+            status = fila.registrar_falha(mensagem_id, str(erro), MAX_TENTATIVAS)
+            if status == "falhou":
+                database.atualizar_status(caminho_banco, pagamento_id, "erro")
+            continue
         fila.marcar_processada(mensagem_id)
     return len(mensagens)
 

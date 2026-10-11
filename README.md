@@ -7,6 +7,7 @@ Este projeto está em desenvolvimento. Etapas concluídas:
 1. API de registro e consulta de pagamentos.
 2. Fila e worker que processam os pagamentos pendentes.
 3. Idempotência: o mesmo pedido enviado duas vezes não cria dois pagamentos.
+4. Tratamento de falhas: novas tentativas no worker e fila de falhas.
 
 ## Tecnologias
 
@@ -58,6 +59,14 @@ curl -X POST http://127.0.0.1:8000/pagamentos -H "Content-Type: application/json
 
 Se você já tinha um `pagamentos.db` de etapas anteriores, apague o arquivo, porque a tabela ganhou a coluna da chave.
 
+## Falhas no processamento
+
+Se o worker der erro ao processar uma mensagem, ele tenta de novo na próxima passagem pela fila. Depois de 3 tentativas sem sucesso, a mensagem vai para o estado `falhou` (fila de falhas, a chamada "dead-letter"), e o pagamento fica com status `erro`.
+
+Para ver as mensagens que falharam, consulte a tabela `fila` no SQLite, pelas colunas `status`, `tentativas` e `ultimo_erro`.
+
+Se você já tinha um `pagamentos.db` das etapas anteriores, apague o arquivo, porque a tabela `fila` mudou.
+
 ## Testes
 
 ```bash
@@ -99,5 +108,4 @@ tests/
 
 ## Próximas etapas
 
-1. Tratar falhas: tentativas repetidas quando o processamento dá erro.
-2. Trocar a fila de SQLite por um broker de mensagens (RabbitMQ) e usar PostgreSQL com Docker Compose.
+1. Trocar a fila de SQLite por um broker de mensagens (RabbitMQ) e usar PostgreSQL com Docker Compose.

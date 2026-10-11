@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS pagamentos (
 CREATE TABLE IF NOT EXISTS fila (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     mensagem TEXT NOT NULL,
-    processada INTEGER NOT NULL DEFAULT 0
+    status TEXT NOT NULL DEFAULT 'pendente',
+    tentativas INTEGER NOT NULL DEFAULT 0,
+    ultimo_erro TEXT
 );
 """
 
