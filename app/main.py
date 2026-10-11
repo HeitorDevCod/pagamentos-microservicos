@@ -1,12 +1,22 @@
 from decimal import Decimal
 
-from fastapi import FastAPI, HTTPException
+import sqlite3
+
+from fastapi import FastAPI, Header, HTTPException
 
 from app import database
 from app.fila import FilaBanco
 from app.schemas import PagamentoCriar, PagamentoResposta
 
 STATUS_INICIAL = "pendente"
+
+
+def mesmo_pedido(linha: dict, dados: PagamentoCriar) -> bool:
+    return (
+        linha["descricao"] == dados.descricao
+        and linha["valor_centavos"] == int(dados.valor * 100)
+        and linha["metodo"] == dados.metodo.value
+    )
 
 
 def criar_app(caminho_banco: str = "pagamentos.db", fila=None) -> FastAPI:
@@ -25,14 +35,39 @@ def criar_app(caminho_banco: str = "pagamentos.db", fila=None) -> FastAPI:
         )
 
     @app.post("/pagamentos", status_code=201, response_model=PagamentoResposta)
-    def criar_pagamento(dados: PagamentoCriar):
-        novo_id = database.inserir_pagamento(
-            caminho_banco,
-            dados.descricao,
-            int(dados.valor * 100),
-            dados.metodo.value,
-            STATUS_INICIAL,
-        )
+    def criar_pagamento(
+        dados: PagamentoCriar,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if idempotency_key:
+            existente = database.buscar_pagamento_por_chave(caminho_banco, idempotency_key)
+            if existente:
+                if not mesmo_pedido(existente, dados):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Essa Idempotency-Key já foi usada com outros dados",
+                    )
+                return para_resposta(existente)
+
+        try:
+            novo_id = database.inserir_pagamento(
+                caminho_banco,
+                dados.descricao,
+                int(dados.valor * 100),
+                dados.metodo.value,
+                STATUS_INICIAL,
+                idempotency_key,
+            )
+        except sqlite3.IntegrityError:
+            # Outra requisição com a mesma chave foi gravada antes desta
+            existente = database.buscar_pagamento_por_chave(caminho_banco, idempotency_key)
+            if existente and mesmo_pedido(existente, dados):
+                return para_resposta(existente)
+            raise HTTPException(
+                status_code=409,
+                detail="Essa Idempotency-Key já foi usada com outros dados",
+            )
+
         fila.publicar({"pagamento_id": novo_id})
         return para_resposta(database.buscar_pagamento(caminho_banco, novo_id))
 

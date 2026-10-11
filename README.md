@@ -6,6 +6,7 @@ Este projeto está em desenvolvimento. Etapas concluídas:
 
 1. API de registro e consulta de pagamentos.
 2. Fila e worker que processam os pagamentos pendentes.
+3. Idempotência: o mesmo pedido enviado duas vezes não cria dois pagamentos.
 
 ## Tecnologias
 
@@ -42,6 +43,20 @@ python -m app.worker
 ```
 
 O arquivo do banco é definido por `DATABASE_PATH` (padrão `pagamentos.db`). Use o mesmo valor na API e no worker.
+
+## Idempotência
+
+Em caso de falha de rede, o cliente pode repetir o `POST` sem saber se o primeiro chegou. Para evitar cobranças duplicadas, envie o cabeçalho `Idempotency-Key` com um valor único para cada pedido:
+
+```bash
+curl -X POST http://127.0.0.1:8000/pagamentos -H "Content-Type: application/json" -H "Idempotency-Key: pedido-123" -d "{\"descricao\": \"Assinatura mensal\", \"valor\": \"49.90\", \"metodo\": \"pix\"}"
+```
+
+- Mesma chave e mesmos dados: a API devolve o pagamento que já existe, sem criar outro e sem publicar outra mensagem na fila.
+- Mesma chave com dados diferentes: a API responde `409 Conflict`.
+- Sem o cabeçalho: cada requisição cria um pagamento novo.
+
+Se você já tinha um `pagamentos.db` de etapas anteriores, apague o arquivo, porque a tabela ganhou a coluna da chave.
 
 ## Testes
 
@@ -84,6 +99,5 @@ tests/
 
 ## Próximas etapas
 
-1. Idempotência: o mesmo pedido enviado duas vezes não gera dois pagamentos.
-2. Tratar falhas: tentativas repetidas quando o processamento dá erro.
-3. Trocar a fila de SQLite por um broker de mensagens (RabbitMQ) e usar PostgreSQL com Docker Compose.
+1. Tratar falhas: tentativas repetidas quando o processamento dá erro.
+2. Trocar a fila de SQLite por um broker de mensagens (RabbitMQ) e usar PostgreSQL com Docker Compose.

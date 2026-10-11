@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     valor_centavos INTEGER NOT NULL CHECK (valor_centavos > 0),
     metodo TEXT NOT NULL,
     status TEXT NOT NULL,
-    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    chave_idempotencia TEXT UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS fila (
@@ -30,15 +31,23 @@ def criar_tabelas(caminho):
         conn.executescript(SCHEMA)
 
 
-def inserir_pagamento(caminho, descricao, valor_centavos, metodo, status):
+def inserir_pagamento(caminho, descricao, valor_centavos, metodo, status, chave_idempotencia=None):
     with closing(conectar(caminho)) as conn:
         cursor = conn.execute(
-            "INSERT INTO pagamentos (descricao, valor_centavos, metodo, status) "
-            "VALUES (?, ?, ?, ?)",
-            (descricao, valor_centavos, metodo, status),
+            "INSERT INTO pagamentos (descricao, valor_centavos, metodo, status, chave_idempotencia) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (descricao, valor_centavos, metodo, status, chave_idempotencia),
         )
         conn.commit()
         return cursor.lastrowid
+
+
+def buscar_pagamento_por_chave(caminho, chave_idempotencia):
+    with closing(conectar(caminho)) as conn:
+        linha = conn.execute(
+            "SELECT * FROM pagamentos WHERE chave_idempotencia = ?", (chave_idempotencia,)
+        ).fetchone()
+        return dict(linha) if linha else None
 
 
 def buscar_pagamento(caminho, pagamento_id):
