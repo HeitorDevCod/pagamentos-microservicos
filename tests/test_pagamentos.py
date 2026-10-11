@@ -213,4 +213,4 @@ def test_mensagem_mal_formada_nao_derruba_o_worker(caminho_banco):
     falhas = FilaBanco(caminho_banco).falhas()
     assert len(falhas) == 1
     assert falhas[0]["tentativas"] == 3
-    assert "pagamento_id" in falhas[0]["ultimo_erro"]
+    assert falhas[0]["ultimo_erro"].startswith("mensagem sem o campo 'pagamento_id'")

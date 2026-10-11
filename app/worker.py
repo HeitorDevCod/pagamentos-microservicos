@@ -29,6 +29,8 @@ def processar_pendentes(caminho_banco):
     mensagens = fila.pendentes()
     for mensagem_id, mensagem in mensagens:
         try:
+            if "pagamento_id" not in mensagem:
+                raise ValueError(f"mensagem sem o campo 'pagamento_id': {mensagem}")
             processar_pagamento(caminho_banco, mensagem["pagamento_id"])
         except Exception as erro:
             status = fila.registrar_falha(mensagem_id, str(erro), MAX_TENTATIVAS)
