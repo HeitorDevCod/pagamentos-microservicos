@@ -52,4 +52,4 @@ def executar(caminho_banco, intervalo=2.0):
 
 
 if __name__ == "__main__":
-    executar(os.getenv("DATABASE_PATH", "pagamentos.db"))
+    executar(os.getenv("DATABASE_URL", "pagamentos.db"))

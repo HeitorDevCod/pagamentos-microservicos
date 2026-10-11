@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: pagamentos
+      POSTGRES_PASSWORD: pagamentos
+      POSTGRES_DB: pagamentos
+    ports:
+      - "5432:5432"
+    volumes:
+      - dados_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pagamentos -d pagamentos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    command: uvicorn app.main:criar_app --factory --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql://pagamentos:pagamentos@db:5432/pagamentos
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: python -m app.worker
+    environment:
+      DATABASE_URL: postgresql://pagamentos:pagamentos@db:5432/pagamentos
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dados_postgres:

@@ -1,10 +1,11 @@
-from decimal import Decimal
+import os
 
-import sqlite3
+from decimal import Decimal
 
 from fastapi import FastAPI, Header, HTTPException
 
 from app import database
+from app.database import ChaveDuplicada
 from app.fila import FilaBanco
 from app.schemas import PagamentoCriar, PagamentoResposta
 
@@ -19,7 +20,8 @@ def mesmo_pedido(linha: dict, dados: PagamentoCriar) -> bool:
     )
 
 
-def criar_app(caminho_banco: str = "pagamentos.db", fila=None) -> FastAPI:
+def criar_app(caminho_banco: str | None = None, fila=None) -> FastAPI:
+    caminho_banco = caminho_banco or os.getenv("DATABASE_URL", "pagamentos.db")
     database.criar_tabelas(caminho_banco)
     fila = fila or FilaBanco(caminho_banco)
     app = FastAPI(title="Pagamentos", version="0.2.0")
@@ -58,7 +60,7 @@ def criar_app(caminho_banco: str = "pagamentos.db", fila=None) -> FastAPI:
                 STATUS_INICIAL,
                 idempotency_key,
             )
-        except sqlite3.IntegrityError:
+        except ChaveDuplicada:
             # Outra requisição com a mesma chave foi gravada antes desta
             existente = database.buscar_pagamento_por_chave(caminho_banco, idempotency_key)
             if existente and mesmo_pedido(existente, dados):

@@ -67,6 +67,18 @@ Para ver as mensagens que falharam, consulte a tabela `fila` no SQLite, pelas co
 
 Se você já tinha um `pagamentos.db` das etapas anteriores, apague o arquivo, porque a tabela `fila` mudou.
 
+## Rodando com Docker (PostgreSQL)
+
+Com Docker instalado, suba o banco, a API e o worker juntos:
+
+```bash
+docker compose up --build
+```
+
+A API fica em http://127.0.0.1:8000 e o PostgreSQL em `localhost:5432` (usuário e senha `pagamentos`, só para desenvolvimento).
+
+A variável `DATABASE_URL` decide o banco: com `postgresql://...` a aplicação usa PostgreSQL; sem ela, usa o arquivo SQLite (`pagamentos.db`). Os testes continuam usando SQLite.
+
 ## Testes
 
 ```bash
