@@ -33,6 +33,7 @@ def processar_pendentes(caminho_banco):
 
 
 def executar(caminho_banco, intervalo=2.0):
+    database.criar_tabelas(caminho_banco)
     print(f"Worker iniciado. Verificando a fila a cada {intervalo} segundos.")
     while True:
         processar_pendentes(caminho_banco)
