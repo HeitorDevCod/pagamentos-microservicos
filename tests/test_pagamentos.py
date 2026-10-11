@@ -201,3 +201,16 @@ def test_falha_permanente_vai_para_fila_de_falhas_e_marca_pagamento_com_erro(cli
     assert falhas[0]["ultimo_erro"] == "serviço indisponível"
     assert FilaBanco(caminho_banco).pendentes() == []
     assert client.get("/pagamentos/1").json()["status"] == "erro"
+
+
+def test_mensagem_mal_formada_nao_derruba_o_worker(caminho_banco):
+    database.criar_tabelas(caminho_banco)
+    FilaBanco(caminho_banco).publicar({"outro_campo": 1})
+
+    for _ in range(3):
+        processar_pendentes(caminho_banco)
+
+    falhas = FilaBanco(caminho_banco).falhas()
+    assert len(falhas) == 1
+    assert falhas[0]["tentativas"] == 3
+    assert "pagamento_id" in falhas[0]["ultimo_erro"]

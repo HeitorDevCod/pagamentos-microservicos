@@ -28,13 +28,14 @@ def processar_pendentes(caminho_banco):
     fila = FilaBanco(caminho_banco)
     mensagens = fila.pendentes()
     for mensagem_id, mensagem in mensagens:
-        pagamento_id = mensagem["pagamento_id"]
         try:
-            processar_pagamento(caminho_banco, pagamento_id)
+            processar_pagamento(caminho_banco, mensagem["pagamento_id"])
         except Exception as erro:
             status = fila.registrar_falha(mensagem_id, str(erro), MAX_TENTATIVAS)
             if status == "falhou":
-                database.atualizar_status(caminho_banco, pagamento_id, "erro")
+                pagamento_id = mensagem.get("pagamento_id")
+                if pagamento_id is not None:
+                    database.atualizar_status(caminho_banco, pagamento_id, "erro")
             continue
         fila.marcar_processada(mensagem_id)
     return len(mensagens)
