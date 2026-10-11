@@ -8,13 +8,15 @@ Este projeto está em desenvolvimento. Etapas concluídas:
 2. Fila e worker que processam os pagamentos pendentes.
 3. Idempotência: o mesmo pedido enviado duas vezes não cria dois pagamentos.
 4. Tratamento de falhas: novas tentativas no worker e fila de falhas.
+5. PostgreSQL e Docker Compose para subir o banco, a API e o worker com um comando.
 
 ## Tecnologias
 
 - Python 3.14
 - FastAPI e Pydantic para a API e validação dos dados
-- SQLite (biblioteca padrão) para armazenamento
-- Fila guardada no próprio SQLite (sem broker externo)
+- PostgreSQL (via Docker) ou SQLite (desenvolvimento e testes)
+- Fila guardada no próprio banco (sem broker externo)
+- Docker Compose para subir tudo
 - pytest e httpx para testes
 
 ## Como rodar
@@ -65,8 +67,6 @@ Se o worker der erro ao processar uma mensagem, ele tenta de novo na próxima pa
 
 Para ver as mensagens que falharam, consulte a tabela `fila` no SQLite, pelas colunas `status`, `tentativas` e `ultimo_erro`.
 
-Se você já tinha um `pagamentos.db` das etapas anteriores, apague o arquivo, porque a tabela `fila` mudou.
-
 ## Rodando com Docker (PostgreSQL)
 
 Com Docker instalado, suba o banco, a API e o worker juntos:
@@ -111,8 +111,8 @@ Métodos aceitos: `pix`, `boleto` e `cartao_credito`. O valor precisa ser maior 
 app/
   main.py        rotas e criação da aplicação
   schemas.py     modelos de entrada e saída (Pydantic)
-  database.py    acesso ao SQLite
-  fila.py        fila guardada numa tabela do SQLite
+  database.py    acesso ao PostgreSQL ou SQLite
+  fila.py        fila guardada numa tabela do banco
   worker.py      processa os pagamentos pendentes
 tests/
   test_pagamentos.py
@@ -120,4 +120,4 @@ tests/
 
 ## Próximas etapas
 
-1. Trocar a fila de SQLite por um broker de mensagens (RabbitMQ) e usar PostgreSQL com Docker Compose.
+1. Trocar a fila guardada no banco por um broker de mensagens (RabbitMQ).
