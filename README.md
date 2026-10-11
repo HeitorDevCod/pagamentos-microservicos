@@ -43,7 +43,7 @@ Para rodar, deixe a API no ar e, em outro terminal, o worker:
 python -m app.worker
 ```
 
-O arquivo do banco é definido por `DATABASE_PATH` (padrão `pagamentos.db`). Use o mesmo valor na API e no worker.
+O banco é definido por `DATABASE_URL` (padrão: arquivo `pagamentos.db`). Use o mesmo valor na API e no worker.
 
 ## Idempotência
 
