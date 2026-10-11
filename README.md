@@ -9,13 +9,14 @@ Este projeto está em desenvolvimento. Etapas concluídas:
 3. Idempotência: o mesmo pedido enviado duas vezes não cria dois pagamentos.
 4. Tratamento de falhas: novas tentativas no worker e fila de falhas.
 5. PostgreSQL e Docker Compose para subir o banco, a API e o worker com um comando.
+6. Fila com RabbitMQ no lugar da tabela do banco.
 
 ## Tecnologias
 
 - Python 3.14
 - FastAPI e Pydantic para a API e validação dos dados
 - PostgreSQL (via Docker) ou SQLite (desenvolvimento e testes)
-- Fila guardada no próprio banco (sem broker externo)
+- RabbitMQ para a fila de pagamentos
 - Docker Compose para subir tudo
 - pytest e httpx para testes
 
@@ -32,14 +33,14 @@ A documentação interativa fica em http://127.0.0.1:8000/docs.
 
 ## Processando pagamentos
 
-A API grava uma mensagem na tabela `fila` a cada pagamento criado. O worker consulta essa tabela a cada 2 segundos, processa as mensagens pendentes e decide o status:
+A API publica uma mensagem na fila `pagamentos.pendentes` do RabbitMQ a cada pagamento criado. O worker consome essas mensagens e decide o status:
 
 - valor até R$ 1.000,00: `aprovado`
 - valor acima de R$ 1.000,00: `recusado`
 
 O worker ignora pagamentos que já não estão `pendente`, então processar a mesma mensagem duas vezes não muda o resultado.
 
-Para rodar, deixe a API no ar e, em outro terminal, o worker:
+Para rodar sem Docker, é preciso um RabbitMQ acessível em `RABBITMQ_URL` (padrão `amqp://guest:guest@localhost:5672/`), além de deixar a API e o worker no ar:
 
 ```bash
 python -m app.worker
@@ -63,9 +64,9 @@ Se você já tinha um `pagamentos.db` de etapas anteriores, apague o arquivo, po
 
 ## Falhas no processamento
 
-Se o worker der erro ao processar uma mensagem, ele tenta de novo na próxima passagem pela fila. Depois de 3 tentativas sem sucesso, a mensagem vai para o estado `falhou` (fila de falhas, a chamada "dead-letter"), e o pagamento fica com status `erro`.
+Se o worker der erro ao processar uma mensagem, ele publica a mensagem de novo na fila com um contador de tentativas. Depois de 3 tentativas sem sucesso, a mensagem vai para a fila `pagamentos.falhas` (a chamada "dead-letter"), e o pagamento fica com status `erro`.
 
-Para ver as mensagens que falharam, consulte a tabela `fila` no SQLite, pelas colunas `status`, `tentativas` e `ultimo_erro`.
+Para ver as mensagens que falharam, abra o painel do RabbitMQ em http://127.0.0.1:15672 (usuário e senha `guest`) e veja a fila `pagamentos.falhas`.
 
 ## Rodando com Docker (PostgreSQL)
 
@@ -75,9 +76,9 @@ Com Docker instalado, suba o banco, a API e o worker juntos:
 docker compose up --build
 ```
 
-A API fica em http://127.0.0.1:8000 e o PostgreSQL em `localhost:5432` (usuário e senha `pagamentos`, só para desenvolvimento).
+A API fica em http://127.0.0.1:8000, o PostgreSQL em `localhost:5432` (usuário e senha `pagamentos`) e o painel do RabbitMQ em http://127.0.0.1:15672 (usuário e senha `guest`). Esses dados são só para desenvolvimento.
 
-A variável `DATABASE_URL` decide o banco: com `postgresql://...` a aplicação usa PostgreSQL; sem ela, usa o arquivo SQLite (`pagamentos.db`). Os testes continuam usando SQLite.
+A variável `DATABASE_URL` decide o banco: com `postgresql://...` a aplicação usa PostgreSQL; sem ela, usa o arquivo SQLite (`pagamentos.db`). Os testes continuam usando SQLite e uma fila em memória.
 
 ## Testes
 
@@ -112,7 +113,7 @@ app/
   main.py        rotas e criação da aplicação
   schemas.py     modelos de entrada e saída (Pydantic)
   database.py    acesso ao PostgreSQL ou SQLite
-  fila.py        fila guardada numa tabela do banco
+  fila.py        publicação e consumo no RabbitMQ
   worker.py      processa os pagamentos pendentes
 tests/
   test_pagamentos.py
@@ -120,4 +121,4 @@ tests/
 
 ## Próximas etapas
 
-1. Trocar a fila guardada no banco por um broker de mensagens (RabbitMQ).
+1. Próximos passos a definir.

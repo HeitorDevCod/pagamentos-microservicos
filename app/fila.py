@@ -1,52 +1,86 @@
 import json
-from contextlib import closing
+import os
 
-from app.database import conectar
+import pika
+
+NOME_FILA = "pagamentos.pendentes"
+NOME_FALHAS = "pagamentos.falhas"
+MAX_TENTATIVAS = 3
+
+ACK = "ack"
+REPUBLICAR = "republicar"
+DESCARTAR = "descartar"
 
 
-class FilaBanco:
-    """Fila simples guardada numa tabela do SQLite."""
+class FilaMemoria:
+    """Fila em memória, usada nos testes."""
 
-    def __init__(self, caminho_banco):
-        self.caminho = caminho_banco
+    def __init__(self):
+        self.mensagens = []
 
     def publicar(self, mensagem):
-        with closing(conectar(self.caminho)) as conn:
-            conn.execute(
-                "INSERT INTO fila (mensagem) VALUES (?)", (json.dumps(mensagem),)
-            )
-            conn.commit()
+        self.mensagens.append(mensagem)
 
-    def pendentes(self):
-        with closing(conectar(self.caminho)) as conn:
-            linhas = conn.execute(
-                "SELECT id, mensagem FROM fila WHERE status = 'pendente' ORDER BY id"
-            ).fetchall()
-            return [(linha["id"], json.loads(linha["mensagem"])) for linha in linhas]
 
-    def falhas(self):
-        with closing(conectar(self.caminho)) as conn:
-            linhas = conn.execute(
-                "SELECT id, mensagem, tentativas, ultimo_erro FROM fila WHERE status = 'falhou' ORDER BY id"
-            ).fetchall()
-            return [dict(linha) for linha in linhas]
+def decidir_acao(processar, mensagem, tentativas_anteriores, ao_falhar):
+    """Roda o processamento e diz o que fazer com a mensagem.
 
-    def marcar_processada(self, mensagem_id):
-        with closing(conectar(self.caminho)) as conn:
-            conn.execute("UPDATE fila SET status = 'processada' WHERE id = ?", (mensagem_id,))
-            conn.commit()
+    - sucesso: confirma a mensagem (ack)
+    - falha com tentativas restantes: publica de novo com o contador +1 (republicar)
+    - falha na última tentativa: chama ao_falhar e envia para a fila de falhas (descartar)
+    """
+    try:
+        processar(mensagem)
+    except Exception as erro:
+        if tentativas_anteriores + 1 >= MAX_TENTATIVAS:
+            ao_falhar(mensagem, str(erro))
+            return DESCARTAR
+        return REPUBLICAR
+    return ACK
 
-    def registrar_falha(self, mensagem_id, erro, max_tentativas):
-        """Conta a falha. Depois de max_tentativas, a mensagem vai para 'falhou'. Devolve o novo status."""
-        with closing(conectar(self.caminho)) as conn:
-            conn.execute(
-                "UPDATE fila SET tentativas = tentativas + 1, ultimo_erro = ? WHERE id = ?",
-                (erro, mensagem_id),
-            )
-            tentativas = conn.execute(
-                "SELECT tentativas FROM fila WHERE id = ?", (mensagem_id,)
-            ).fetchone()["tentativas"]
-            novo_status = "falhou" if tentativas >= max_tentativas else "pendente"
-            conn.execute("UPDATE fila SET status = ? WHERE id = ?", (novo_status, mensagem_id))
-            conn.commit()
-            return novo_status
+
+class FilaRabbitMQ:
+    """Publica e consome mensagens no RabbitMQ. Conecta na primeira vez que é usada."""
+
+    def __init__(self, url=None):
+        self.url = url or os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+        self._canal = None
+
+    def _obter_canal(self):
+        if self._canal is None or self._canal.is_closed:
+            conexao = pika.BlockingConnection(pika.URLParameters(self.url))
+            self._canal = conexao.channel()
+            self._canal.queue_declare(queue=NOME_FILA, durable=True)
+            self._canal.queue_declare(queue=NOME_FALHAS, durable=True)
+        return self._canal
+
+    def _enviar(self, fila, mensagem, tentativas=0):
+        self._obter_canal().basic_publish(
+            exchange="",
+            routing_key=fila,
+            body=json.dumps(mensagem),
+            properties=pika.BasicProperties(
+                delivery_mode=pika.DeliveryMode.Persistent,
+                headers={"tentativas": tentativas},
+            ),
+        )
+
+    def publicar(self, mensagem):
+        self._enviar(NOME_FILA, mensagem)
+
+    def consumir(self, processar, ao_falhar):
+        canal = self._obter_canal()
+        canal.basic_qos(prefetch_count=1)
+
+        def ao_receber(ch, metodo, propriedades, corpo):
+            mensagem = json.loads(corpo)
+            tentativas = int((propriedades.headers or {}).get("tentativas", 0))
+            acao = decidir_acao(processar, mensagem, tentativas, ao_falhar)
+            if acao == REPUBLICAR:
+                self._enviar(NOME_FILA, mensagem, tentativas + 1)
+            elif acao == DESCARTAR:
+                self._enviar(NOME_FALHAS, mensagem, tentativas + 1)
+            ch.basic_ack(delivery_tag=metodo.delivery_tag)
+
+        canal.basic_consume(queue=NOME_FILA, on_message_callback=ao_receber)
+        canal.start_consuming()

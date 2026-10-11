@@ -2,9 +2,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import database
-from app.fila import FilaBanco
+from app.fila import ACK, DESCARTAR, REPUBLICAR, FilaMemoria, decidir_acao
 from app.main import criar_app
-from app.worker import processar_pagamento, processar_pendentes
+from app.worker import marcar_falha, processar_mensagem, processar_pagamento
 
 
 @pytest.fixture
@@ -13,8 +13,13 @@ def caminho_banco(tmp_path):
 
 
 @pytest.fixture
-def client(caminho_banco):
-    return TestClient(criar_app(caminho_banco))
+def fila():
+    return FilaMemoria()
+
+
+@pytest.fixture
+def client(caminho_banco, fila):
+    return TestClient(criar_app(caminho_banco, fila=fila))
 
 
 def novo_pagamento(**campos):
@@ -34,10 +39,10 @@ def test_criar_pagamento_comeca_pendente(client):
     assert corpo["metodo"] == "pix"
 
 
-def test_criar_pagamento_publica_mensagem_na_fila(client, caminho_banco):
+def test_criar_pagamento_publica_mensagem_na_fila(client, fila):
     client.post("/pagamentos", json=novo_pagamento())
 
-    assert FilaBanco(caminho_banco).pendentes() == [(1, {"pagamento_id": 1})]
+    assert fila.mensagens == [{"pagamento_id": 1}]
 
 
 def test_valor_zero_ou_negativo_e_recusado(client):
@@ -61,9 +66,7 @@ def test_buscar_pagamento_existente(client):
 
 
 def test_buscar_pagamento_inexistente_retorna_404(client):
-    resposta = client.get("/pagamentos/999")
-
-    assert resposta.status_code == 404
+    assert client.get("/pagamentos/999").status_code == 404
 
 
 def test_listar_pagamentos_na_ordem_de_criacao(client):
@@ -103,23 +106,7 @@ def test_worker_ignora_pagamento_inexistente(caminho_banco):
     assert processar_pagamento(caminho_banco, 999) is None
 
 
-def test_processar_pendentes_consome_a_fila_e_atualiza_pagamentos(client, caminho_banco):
-    client.post("/pagamentos", json=novo_pagamento(valor="10.00"))
-    client.post("/pagamentos", json=novo_pagamento(valor="2000.00"))
-
-    assert processar_pendentes(caminho_banco) == 2
-    assert client.get("/pagamentos/1").json()["status"] == "aprovado"
-    assert client.get("/pagamentos/2").json()["status"] == "recusado"
-    assert FilaBanco(caminho_banco).pendentes() == []
-
-
-def test_processar_pendentes_sem_mensagens_nao_faz_nada(caminho_banco):
-    database.criar_tabelas(caminho_banco)
-
-    assert processar_pendentes(caminho_banco) == 0
-
-
-def test_mesma_chave_e_mesmo_pedido_nao_cria_outro_pagamento(client, caminho_banco):
+def test_mesma_chave_e_mesmo_pedido_nao_cria_outro_pagamento(client, fila):
     cabecalhos = {"Idempotency-Key": "pedido-123"}
 
     primeira = client.post("/pagamentos", json=novo_pagamento(), headers=cabecalhos)
@@ -129,7 +116,7 @@ def test_mesma_chave_e_mesmo_pedido_nao_cria_outro_pagamento(client, caminho_ban
     assert segunda.status_code == 201
     assert segunda.json()["id"] == primeira.json()["id"]
     assert len(client.get("/pagamentos").json()) == 1
-    assert len(FilaBanco(caminho_banco).pendentes()) == 1
+    assert len(fila.mensagens) == 1
 
 
 def test_mesma_chave_com_dados_diferentes_retorna_409(client):
@@ -158,59 +145,39 @@ def test_sem_chave_cada_requisicao_cria_um_pagamento(client):
     assert len(client.get("/pagamentos").json()) == 2
 
 
-def test_falha_temporaria_e_tentada_de_novo_e_depois_processada(client, caminho_banco, monkeypatch):
-    import app.worker as worker
+def test_mensagem_sem_pagamento_id_gera_erro_claro(caminho_banco):
+    database.criar_tabelas(caminho_banco)
 
-    client.post("/pagamentos", json=novo_pagamento(valor="10.00"))
-    chamadas = {"n": 0}
-    processar_original = worker.processar_pagamento
-
-    def falha_uma_vez(caminho, pagamento_id):
-        chamadas["n"] += 1
-        if chamadas["n"] == 1:
-            raise RuntimeError("banco ocupado")
-        return processar_original(caminho, pagamento_id)
-
-    monkeypatch.setattr(worker, "processar_pagamento", falha_uma_vez)
-
-    processar_pendentes(caminho_banco)
-    assert client.get("/pagamentos/1").json()["status"] == "pendente"
-    assert FilaBanco(caminho_banco).pendentes() == [(1, {"pagamento_id": 1})]
-
-    processar_pendentes(caminho_banco)
-    assert client.get("/pagamentos/1").json()["status"] == "aprovado"
-    assert FilaBanco(caminho_banco).pendentes() == []
+    with pytest.raises(ValueError, match="pagamento_id"):
+        processar_mensagem(caminho_banco, {"outro_campo": 1})
 
 
-def test_falha_permanente_vai_para_fila_de_falhas_e_marca_pagamento_com_erro(client, caminho_banco, monkeypatch):
-    import app.worker as worker
+def test_decidir_acao_sucesso_confirma_a_mensagem():
+    assert decidir_acao(lambda m: None, {"pagamento_id": 1}, 0, lambda m, e: None) == ACK
 
-    client.post("/pagamentos", json=novo_pagamento(valor="10.00"))
 
-    def sempre_falha(caminho, pagamento_id):
+def test_decidir_acao_falha_com_tentativas_restantes_republica():
+    def falha(m):
+        raise RuntimeError("banco ocupado")
+
+    assert decidir_acao(falha, {"pagamento_id": 1}, 0, lambda m, e: None) == REPUBLICAR
+
+
+def test_decidir_acao_falha_na_ultima_tentativa_descarta_e_avisa():
+    avisos = []
+
+    def falha(m):
         raise RuntimeError("serviço indisponível")
 
-    monkeypatch.setattr(worker, "processar_pagamento", sempre_falha)
+    acao = decidir_acao(falha, {"pagamento_id": 1}, 2, lambda m, e: avisos.append(e))
 
-    for _ in range(3):
-        processar_pendentes(caminho_banco)
+    assert acao == DESCARTAR
+    assert avisos == ["serviço indisponível"]
 
-    falhas = FilaBanco(caminho_banco).falhas()
-    assert len(falhas) == 1
-    assert falhas[0]["tentativas"] == 3
-    assert falhas[0]["ultimo_erro"] == "serviço indisponível"
-    assert FilaBanco(caminho_banco).pendentes() == []
+
+def test_marcar_falha_coloca_pagamento_com_erro(client, caminho_banco):
+    client.post("/pagamentos", json=novo_pagamento())
+
+    marcar_falha(caminho_banco, {"pagamento_id": 1}, "erro")
+
     assert client.get("/pagamentos/1").json()["status"] == "erro"
-
-
-def test_mensagem_mal_formada_nao_derruba_o_worker(caminho_banco):
-    database.criar_tabelas(caminho_banco)
-    FilaBanco(caminho_banco).publicar({"outro_campo": 1})
-
-    for _ in range(3):
-        processar_pendentes(caminho_banco)
-
-    falhas = FilaBanco(caminho_banco).falhas()
-    assert len(falhas) == 1
-    assert falhas[0]["tentativas"] == 3
-    assert falhas[0]["ultimo_erro"].startswith("mensagem sem o campo 'pagamento_id'")

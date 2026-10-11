@@ -19,13 +19,6 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     chave_idempotencia TEXT UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS fila (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    mensagem TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pendente',
-    tentativas INTEGER NOT NULL DEFAULT 0,
-    ultimo_erro TEXT
-);
 """
 
 SCHEMA_POSTGRES = """
@@ -39,13 +32,6 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     chave_idempotencia TEXT UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS fila (
-    id SERIAL PRIMARY KEY,
-    mensagem TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pendente',
-    tentativas INTEGER NOT NULL DEFAULT 0,
-    ultimo_erro TEXT
-);
 """
 
 

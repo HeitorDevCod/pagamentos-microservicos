@@ -6,7 +6,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from app import database
 from app.database import ChaveDuplicada
-from app.fila import FilaBanco
+from app.fila import FilaRabbitMQ
 from app.schemas import PagamentoCriar, PagamentoResposta
 
 STATUS_INICIAL = "pendente"
@@ -23,7 +23,7 @@ def mesmo_pedido(linha: dict, dados: PagamentoCriar) -> bool:
 def criar_app(caminho_banco: str | None = None, fila=None) -> FastAPI:
     caminho_banco = caminho_banco or os.getenv("DATABASE_URL", "pagamentos.db")
     database.criar_tabelas(caminho_banco)
-    fila = fila or FilaBanco(caminho_banco)
+    fila = fila or FilaRabbitMQ()
     app = FastAPI(title="Pagamentos", version="0.2.0")
 
     def para_resposta(linha: dict) -> PagamentoResposta:
