@@ -43,6 +43,14 @@ def buscar_pagamento(caminho, pagamento_id):
         return dict(linha) if linha else None
 
 
+def atualizar_status(caminho, pagamento_id, status):
+    with closing(conectar(caminho)) as conn:
+        conn.execute(
+            "UPDATE pagamentos SET status = ? WHERE id = ?", (status, pagamento_id)
+        )
+        conn.commit()
+
+
 def listar_pagamentos(caminho):
     with closing(conectar(caminho)) as conn:
         linhas = conn.execute("SELECT * FROM pagamentos ORDER BY id").fetchall()

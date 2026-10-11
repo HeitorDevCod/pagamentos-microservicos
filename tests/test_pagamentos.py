@@ -1,13 +1,25 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app import database
+from app.fila import FilaMemoria
 from app.main import criar_app
+from app.worker import processar_pagamento
 
 
 @pytest.fixture
-def client(tmp_path):
-    app = criar_app(str(tmp_path / "teste.db"))
-    return TestClient(app)
+def caminho_banco(tmp_path):
+    return str(tmp_path / "teste.db")
+
+
+@pytest.fixture
+def fila():
+    return FilaMemoria()
+
+
+@pytest.fixture
+def client(caminho_banco, fila):
+    return TestClient(criar_app(caminho_banco, fila=fila))
 
 
 def novo_pagamento(**campos):
@@ -25,6 +37,12 @@ def test_criar_pagamento_comeca_pendente(client):
     assert corpo["valor"] == "49.90"
     assert corpo["status"] == "pendente"
     assert corpo["metodo"] == "pix"
+
+
+def test_criar_pagamento_publica_mensagem_na_fila(client, fila):
+    client.post("/pagamentos", json=novo_pagamento())
+
+    assert fila.mensagens == [{"pagamento_id": 1}]
 
 
 def test_valor_zero_ou_negativo_e_recusado(client):
@@ -60,3 +78,31 @@ def test_listar_pagamentos_na_ordem_de_criacao(client):
     resposta = client.get("/pagamentos")
 
     assert [p["descricao"] for p in resposta.json()] == ["Primeiro", "Segundo"]
+
+
+def test_worker_aprova_pagamento_dentro_do_limite(client, caminho_banco):
+    client.post("/pagamentos", json=novo_pagamento(valor="1000.00"))
+
+    assert processar_pagamento(caminho_banco, 1) == "aprovado"
+    assert client.get("/pagamentos/1").json()["status"] == "aprovado"
+
+
+def test_worker_recusa_pagamento_acima_do_limite(client, caminho_banco):
+    client.post("/pagamentos", json=novo_pagamento(valor="1000.01"))
+
+    assert processar_pagamento(caminho_banco, 1) == "recusado"
+    assert client.get("/pagamentos/1").json()["status"] == "recusado"
+
+
+def test_worker_nao_reprocessa_pagamento_ja_processado(client, caminho_banco):
+    client.post("/pagamentos", json=novo_pagamento(valor="10.00"))
+    processar_pagamento(caminho_banco, 1)
+
+    assert processar_pagamento(caminho_banco, 1) is None
+    assert client.get("/pagamentos/1").json()["status"] == "aprovado"
+
+
+def test_worker_ignora_pagamento_inexistente(caminho_banco):
+    database.criar_tabelas(caminho_banco)
+
+    assert processar_pagamento(caminho_banco, 999) is None

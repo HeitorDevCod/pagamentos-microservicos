@@ -3,14 +3,16 @@ from decimal import Decimal
 from fastapi import FastAPI, HTTPException
 
 from app import database
+from app.fila import FilaRabbitMQ
 from app.schemas import PagamentoCriar, PagamentoResposta
 
 STATUS_INICIAL = "pendente"
 
 
-def criar_app(caminho_banco: str = "pagamentos.db") -> FastAPI:
+def criar_app(caminho_banco: str = "pagamentos.db", fila=None) -> FastAPI:
     database.criar_tabelas(caminho_banco)
-    app = FastAPI(title="Pagamentos", version="0.1.0")
+    fila = fila or FilaRabbitMQ()
+    app = FastAPI(title="Pagamentos", version="0.2.0")
 
     def para_resposta(linha: dict) -> PagamentoResposta:
         return PagamentoResposta(
@@ -31,6 +33,7 @@ def criar_app(caminho_banco: str = "pagamentos.db") -> FastAPI:
             dados.metodo.value,
             STATUS_INICIAL,
         )
+        fila.publicar({"pagamento_id": novo_id})
         return para_resposta(database.buscar_pagamento(caminho_banco, novo_id))
 
     @app.get("/pagamentos", response_model=list[PagamentoResposta])
